@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling>=1.25,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "trading-competition-sdk"
+version = "0.1.0"
+description = "Synchronous Python strategy client for the trading competition API"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.28,<0.29", "python-dotenv>=1,<2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trading_sdk"]
+
