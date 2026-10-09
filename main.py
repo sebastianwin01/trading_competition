@@ -2,265 +2,357 @@
 
 import logging
 from pathlib import Path
+from decimal import Decimal, ROUND_DOWN
+from time import monotonic
 
 from trading_sdk import SDKError, TradingClient
 
-# Choose a pair ID from the competition dictionary printed on startup.
-PAIR_ID = None
+
+# ==========================================
+# STEP 1: STRATEGY CONFIGURATION
+# ==========================================
+
+# Focus on one market to avoid opening 26 streams.
+PAIR_ID = 157  # ANTH/USD
+
+# Safety switch: True = analyze only, False = submit real orders.
+DRY_RUN = True
+
+# Maximum USD amount allowed per order.
+MAX_ORDER_USD = Decimal("1500")
+
+# Maximum target exposure to ANTH.
+MAX_POSITION_USD = Decimal("1500")
+
+# Maximum acceptable spread for a NEW purchase.
+MAX_SPREAD_PCT = Decimal("1.0")
+
+# Moving-average signal thresholds.
+BUY_THRESHOLD = Decimal("0.99")
+SELL_THRESHOLD = Decimal("1.01")
+EXIT_THRESHOLD = Decimal("0.975")
+
+# Minimum time between actual order submissions.
+ORDER_COOLDOWN = 60
+
+last_order_time = 0.0
 
 
-# def strategy(client: TradingClient):
-#     """Called once per second while the competition and streams are ready."""
-#     pair_id = PAIR_ID
-#     if pair_id is None:
-#         pairs = client.competition.retrieve()["pairs"] # type=dict, keyed by string pair ID
-#         pair_id = next(
-#             (int(key) for key, pair in pairs.items() if pair.get("trading_status") == "open"),
-#             None,
-#         )
-#     if pair_id is None:
-#         print("No open trading pair. Waiting.")
-#         return
+# ==========================================
+# STEP 2: QUANTITY ROUNDING
+# ==========================================
 
-#     book = client.market.order_book(pair_id)
-#     best_bid = book["bids"][0]["price"] if book["bids"] else None
-#     best_ask = book["asks"][0]["price"] if book["asks"] else None
-#     print(f"Pair {pair_id}: bid={best_bid}, ask={best_ask}")
-
-    # Add your strategy here. Amounts are human decimal strings or Decimal values.
-    # Use the pair's min_price_increment and min_qty_increment from the dictionary.
-    # order = client.orders.create(pair_id, side="buy", qty="1", price="150.42")
-    # client.orders.cancel(order["order_id"])
-
-def strategy(client: TradingClient):
+def round_to_lot(quantity, lot_size):
     """
-    Analyze all open trading pairs in the competition.
-
-    The function:
-    1. Retrieves available securities and trading pairs.
-    2. Checks which markets are open.
-    3. Reads the best bid and ask prices.
-    4. Calculates spreads and mid-prices.
-    5. Ranks markets by percentage spread.
-    6. Displays the top 10 markets.
-
-    This strategy DOES NOT place any orders.
+    Round the desired quantity DOWN to the
+    minimum permitted trading increment.
     """
-
-    # STEP 1: RETRIEVE COMPETITION INFORMATION
-    # The API returns a dictionary containing information
-    # about the competition, assets, and trading pairs.
-    info = client.competition.retrieve()
-
-    # Get the dictionary of trading pairs.
-    # Each key is a pair ID stored as a string.
-    pairs = info["pairs"]
-
-    # Get the dictionary of assets.
-    # This lets us convert asset IDs into symbols.
-    assets = info["assets"]
-
-    # STEP 2: CREATE AN EMPTY LIST
-    # We will store each market's statistics here.
-    # Each element will be a dictionary.
-    opportunities = []
-
-    # STEP 3: LOOP THROUGH ALL TRADING PAIRS
-    # .items() returns both the key and its value.
-    #
-    # pair_key -> The trading pair ID (string)
-    # pair     -> Dictionary describing that pair
-    for pair_key, pair in pairs.items():
-
-        # STEP 4: CHECK IF THE PAIR IS OPEN
-        # If the pair is not open, skip to the next pair.
-        #
-        # continue skips the rest of the current iteration.
-        if pair.get("trading_status") != "open":
-            continue
-
-        # Convert pair ID from string to integer.
-        # The SDK requires an integer pair ID.
-        pair_id = int(pair_key)
-
-        # STEP 5: IDENTIFY THE ASSETS
-        # Each pair connects two assets:
-        #
-        # Base asset  -> Asset being bought or sold
-        # Quote asset -> Asset used to express its price
-        #
-        # Example: ANTH/USD
-        # ANTH is the base asset and USD is the quote.
-        base = assets[str(pair["base_asset_id"])]["symbol"]
-        quote = assets[str(pair["quote_asset_id"])]["symbol"]
-
-        # STEP 6: GET THE LIVE ORDER BOOK
-        # The order book contains:
-        #
-        # bids -> Offers from buyers
-        # asks -> Offers from sellers
-        #
-        # The SDK maintains the market data stream.
-        book = client.market.order_book(pair_id)
-
-        # STEP 7: CHECK FOR MISSING MARKET DATA
-        # An empty bid list means no visible buy orders.
-        # An empty ask list means no visible sell orders.
-        #
-        # We need both sides to calculate the spread.
-        if not book["bids"] or not book["asks"]:
-            continue
-
-        # STEP 8: GET THE BEST BID AND ASK
-        #
-        # [0] selects the first price level.
-        # ["price"] retrieves that level's price.
-        #
-        # Best bid -> Highest available buying price
-        # Best ask -> Lowest available selling price
-        best_bid = book["bids"][0]["price"]
-        best_ask = book["asks"][0]["price"]
-
-        # STEP 9: VALIDATE THE PRICES
-        #
-        # We skip:
-        # - Zero or negative bids
-        # - Markets where the ask is not above the bid
-        #
-        # This keeps our spread calculations meaningful.
-        if best_bid <= 0 or best_ask <= best_bid:
-            continue
-
-        # STEP 10: CALCULATE THE BID-ASK SPREAD
-        #
-        # Spread = Ask - Bid
-        #
-        # Example:
-        # Bid = 31.85
-        # Ask = 32.08
-        # Spread = 0.23
-        spread = best_ask - best_bid
-
-        # STEP 11: CALCULATE MID-PRICE
-        #
-        # Mid-price = (Bid + Ask) / 2
-        #
-        # Example:
-        # (31.85 + 32.08) / 2 = 31.965
-        #
-        # The mid-price is a reference price,
-        # not necessarily an executable price.
-        mid_price = (best_bid + best_ask) / 2
-
-        # STEP 12: CALCULATE PERCENTAGE SPREAD
-        #
-        # Spread % = (Spread / Mid-price) * 100
-        #
-        # This allows comparisons between securities
-        # with different price levels.
-        #
-        # Example:
-        # (0.23 / 31.965) * 100 = 0.720%
-        spread_pct = (spread / mid_price) * 100
-
-        # STEP 13: SAVE MARKET STATISTICS
-        #
-        # append() adds a new dictionary to our list.
-        #
-        # Each dictionary contains the trading pair
-        # and its calculated statistics.
-        opportunities.append({
-            "pair_id": pair_id,
-            "pair": f"{base}/{quote}",
-            "bid": best_bid,
-            "ask": best_ask,
-            "spread": spread,
-            "mid_price": mid_price,
-            "spread_pct": spread_pct
-        })
-
-    # STEP 14: SORT MARKETS BY PERCENTAGE SPREAD
-    #
-    # sort() modifies the original list.
-    #
-    # key=lambda x: x["spread_pct"]
-    # tells Python to sort using the spread percentage.
-    #
-    # reverse=True sorts from largest to smallest.
-    opportunities.sort(
-        key=lambda x: x["spread_pct"],
-        reverse=True
+    steps = (quantity / lot_size).to_integral_value(
+        rounding=ROUND_DOWN
     )
 
-    # STEP 15: DISPLAY THE RESULTS
-    print("\n--- TOP 10 MARKETS BY SPREAD ---")
+    return steps * lot_size
 
-    # [:10] selects the first 10 elements.
-    # Because we already sorted the list,
-    # these are the 10 markets with the largest spreads.
-    for item in opportunities[:10]:
 
-        # Each item is a dictionary.
-        # We access its values using their keys.
-        print(
-            f"Pair {item['pair_id']} "
-            f"({item['pair']}): "
-            f"Bid={item['bid']}, "
-            f"Ask={item['ask']}, "
-            f"Spread={item['spread']:.4f}, "
-            f"Mid={item['mid_price']:.4f}, "
-            f"Spread%={item['spread_pct']:.2f}%"
+# ==========================================
+# STEP 3: TRADING STRATEGY
+# ==========================================
+
+def strategy(client: TradingClient):
+    global last_order_time
+
+    print("\n--- STRATEGY STARTED ---", flush=True)
+
+    # A. RETRIEVE COMPETITION INFORMATION
+    info = client.competition.retrieve()
+
+    pairs = info["pairs"]
+    assets = info["assets"]
+
+    pair = pairs.get(str(PAIR_ID))
+
+    # Do not trade if the competition or pair is closed.
+    if (
+        info["status"] != "active"
+        or pair is None
+        or pair["trading_status"] != "open"
+    ):
+        print("Competition or pair is not active.")
+        return
+
+    # Identify the base and quote assets.
+    base_id = pair["base_asset_id"]
+    quote_id = pair["quote_asset_id"]
+
+    base_asset = assets[str(base_id)]
+    quote_asset = assets[str(quote_id)]
+
+    base = base_asset["symbol"]
+    quote = quote_asset["symbol"]
+
+    # We express our risk limits in USD.
+    if quote != "USD":
+        print("This example only supports USD-quoted pairs.")
+        return
+
+    # Both underlying assets must be open.
+    if (
+        base_asset["trading_status"] != "open"
+        or quote_asset["trading_status"] != "open"
+    ):
+        print("One of the assets is closed.")
+        return
+
+    # B. RETRIEVE THE LIVE ORDER BOOK
+    # Only one order_book() call is needed.
+    book = client.market.order_book(PAIR_ID)
+
+    # Do not calculate statistics from incomplete books.
+    if not book["bids"] or not book["asks"]:
+        print("Waiting for complete order-book data.")
+        return
+
+    # Best available prices and quantities.
+    best_bid = book["bids"][0]["price"]
+    best_ask = book["asks"][0]["price"]
+
+    bid_qty = book["bids"][0]["qty"]
+    ask_qty = book["asks"][0]["qty"]
+
+    # Validate prices and available quantities.
+    if (
+        best_bid <= 0
+        or best_ask <= best_bid
+        or bid_qty <= 0
+        or ask_qty <= 0
+    ):
+        print("Invalid or empty market data.")
+        return
+
+    # C. CALCULATE MARKET STATISTICS
+
+    # Difference between selling and buying quotations.
+    spread = best_ask - best_bid
+
+    # Average of best bid and best ask.
+    mid_price = (best_bid + best_ask) / 2
+
+    # Spread relative to the mid-price.
+    spread_pct = spread / mid_price * 100
+
+    # Notional liquidity at the top of the order book.
+    bid_liquidity = best_bid * bid_qty
+    ask_liquidity = best_ask * ask_qty
+
+    # Quantity imbalance between buyers and sellers.
+    imbalance = (bid_qty - ask_qty) / (bid_qty + ask_qty)
+
+    print(f"Market: {base}/{quote}")
+    print(f"Bid: {best_bid} | Ask: {best_ask}")
+    print(f"Spread: {spread_pct:.3f}%")
+    print(f"Mid-price: {mid_price:.4f}")
+    print(f"Bid liquidity: {bid_liquidity:.2f} USD")
+    print(f"Ask liquidity: {ask_liquidity:.2f} USD")
+    print(f"Imbalance: {imbalance:.3f}")
+
+    # D. CALCULATE A SIMPLE MOVING AVERAGE
+    # Retrieve historical 1-minute trade candles.
+    result = client.market.candles(PAIR_ID, bucket="1m")
+    candles = result["candles"] or []
+
+    # Require five candles plus the current candle.
+    if len(candles) < 6:
+        print("Waiting for more price history.")
+        return
+
+    # Exclude the newest candle because it may be incomplete.
+    closes = [c["close"] for c in candles[-6:-1]]
+
+    # Average closing price of five previous candles.
+    moving_average = sum(
+        closes, Decimal("0")
+    ) / Decimal("5")
+
+    print(f"5-period moving average: {moving_average:.4f}")
+
+    # E. CHECK CURRENT HOLDINGS
+    # Read balances instead of assuming we hold nothing.
+    balances = client.balances.list()
+
+    holdings = {
+        item["asset_id"]: item["quantity"]
+        for item in balances
+    }
+
+    base_balance = holdings.get(base_id, Decimal("0"))
+    quote_balance = holdings.get(quote_id, Decimal("0"))
+
+    print(f"{base} balance: {base_balance}")
+    print(f"{quote} balance: {quote_balance}")
+
+    # This strategy does not manage short positions.
+    if base_balance < 0:
+        print("Negative holdings detected. No action.")
+        return
+
+    # F. DETERMINE A TRADING SIGNAL
+    side = None
+    price = None
+    desired_qty = Decimal("0")
+    reason = ""
+
+    # SELL: Reduce an existing long position.
+    # This also applies to existing ANTH holdings.
+    if base_balance > 0:
+
+        # Exit when the market rises above the average.
+        # This is a signal, not proof of profitability.
+        if mid_price >= moving_average * SELL_THRESHOLD:
+            reason = "Price above moving average"
+
+        # Defensive exit if price falls significantly
+        # below the moving average.
+        elif mid_price <= moving_average * EXIT_THRESHOLD:
+            reason = "Downside risk-exit signal"
+
+        if reason:
+            side = "sell"
+
+            # Sell at no less than the best current bid.
+            price = best_bid
+
+            # Never sell more than we hold or than
+            # the displayed bid quantity.
+            desired_qty = min(
+                base_balance,
+                bid_qty,
+                MAX_ORDER_USD / price
+            )
+
+    # BUY: Enter only when we hold no base asset.
+    elif (
+        mid_price <= moving_average * BUY_THRESHOLD
+        and spread_pct <= MAX_SPREAD_PCT
+        and imbalance >= Decimal("-0.25")
+    ):
+        side = "buy"
+        reason = "Price below moving average"
+
+        # Buy at no more than the best current ask.
+        price = best_ask
+
+        # Limit the order by capital, holdings exposure,
+        # cash availability, and displayed ask quantity.
+        desired_qty = min(
+            MAX_ORDER_USD / price,
+            MAX_POSITION_USD / price,
+            quote_balance / price,
+            ask_qty
         )
 
-    # STEP 16: FUTURE TRADING LOGIC
-    #
-    # Later we can:
-    # - Calculate fair values
-    # - Track historical prices
-    # - Measure order-book liquidity
-    # - Detect potential trading signals
-    # - Implement position and risk limits
-    # - Submit and cancel orders
-    #
-    # For now, this function only analyzes market data.
+    # G. HANDLE NO-SIGNAL CONDITIONS
+    if side is None:
+        print("Signal: HOLD - no suitable trade.")
+        return
 
-    
-        # 8. Trading logic will go here later
-        # No orders are submitted yet.
-            
-    
-#     pair_id = PAIR_ID
-#     if pair_id is None:
-#         pairs = client.competition.retrieve()["pairs"] # type=dict, keyed by string pair ID
-#         pair_id = next(
-#             (int(key) for key, pair in pairs.items() if pair.get("trading_status") == "open"),
-#             None,
-#         )
-#     if pair_id is None:
-#         print("No open trading pair. Waiting.")
-#         return
+    # H. RESPECT EXCHANGE QUANTITY INCREMENTS
+    lot_size = pair["min_qty_increment"]
 
-#     book = client.market.order_book(pair_id)
-#     best_bid = book["bids"][0]["price"] if book["bids"] else None
-#     best_ask = book["asks"][0]["price"] if book["asks"] else None
-#     print(f"Pair {pair_id}: bid={best_bid}, ask={best_ask}")
+    if lot_size <= 0:
+        print("Invalid minimum quantity increment.")
+        return
 
-#     # Add your strategy here. Amounts are human decimal strings or Decimal values.
-#     # Use the pair's min_price_increment and min_qty_increment from the dictionary.
-#     # order = client.orders.create(pair_id, side="buy", qty="1", price="150.42")
-#     # client.orders.cancel(order["order_id"])
+    order_qty = round_to_lot(desired_qty, lot_size)
 
+    if order_qty <= 0:
+        print("Order is too small for the permitted lot size.")
+        return
+
+    print(f"Signal: {side.upper()}")
+    print(f"Reason: {reason}")
+    print(f"Quantity: {order_qty}")
+    print(f"Limit price: {price}")
+
+    # I. PAPER MODE
+    # Do not send real orders while DRY_RUN is True.
+    if DRY_RUN:
+        print("DRY RUN: Order not submitted.")
+        return
+
+    # J. APPLY ORDER COOLDOWN
+    if monotonic() - last_order_time < ORDER_COOLDOWN:
+        print("Cooldown active. No order submitted.")
+        return
+
+    # K. PREVENT DUPLICATE RESTING ORDERS
+    # Include both open and partially filled orders.
+    for order in client.orders.iter_all(pair_id=PAIR_ID):
+        if order["status"] in {"open", "partially_filled"}:
+            print("Existing resting order. No new order.")
+            return
+
+    # L. EXECUTE A SMALL LIMIT IOC ORDER
+    # IOC = Immediate Or Cancel.
+    # The order can fill immediately up to its limit,
+    # with any unfilled quantity cancelled.
+    # Execution is not guaranteed.
+
+    last_order_time = monotonic()
+
+    order = client.orders.create(
+        PAIR_ID,
+        side=side,
+        qty=order_qty,
+        price=price,
+        order_type="ioc"
+    )
+
+    # The acknowledgement is not a guarantee
+    # that the full quantity was executed.
+    print(f"Order ID: {order['order_id']}")
+    print(f"Order status: {order['status']}")
+    print(f"Remaining quantity: {order['remaining_qty']}")
+
+
+# ==========================================
+# STEP 4: MAIN PROGRAM
+# ==========================================
 
 def main():
-    logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(levelname)s: %(message)s"
+    )
+
     try:
-        with TradingClient.from_env(Path(__file__).with_name(".env")) as client:
-            dictionary = client.recovery_snapshot["competition"]
-            print(f"Competition {client.competition_id}: {dictionary['name']}")
-            print(f"Available pair IDs: {', '.join(dictionary['pairs'])}")
-            client.run(strategy, interval=1.0)
+        # Load credentials from your existing .env file.
+        with TradingClient.from_env(
+            Path(__file__).with_name(".env")
+        ) as client:
+
+            info = client.recovery_snapshot["competition"]
+
+            print(
+                f"Competition {client.competition_id}: "
+                f"{info['name']}"
+            )
+
+            print(f"Selected pair ID: {PAIR_ID}")
+
+            mode = "DRY RUN" if DRY_RUN else "LIVE TRADING"
+            print(f"Mode: {mode}")
+
+            # Run every 10 seconds, with a maximum of
+            # three callbacks for the first test.
+            client.run(
+                strategy,
+                interval=10.0,
+                max_iterations=3
+            )
+
     except KeyboardInterrupt:
         print("Strategy stopped.")
+
     except SDKError as error:
         print(f"Strategy stopped: {error}")
         raise SystemExit(1) from None
