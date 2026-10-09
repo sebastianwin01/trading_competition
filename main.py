@@ -322,7 +322,7 @@ def main():
             client.run(
                 strategy,
                 interval=10.0,
-                max_iterations=3
+                max_iterations=10
             )
 
     except KeyboardInterrupt:
