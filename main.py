@@ -33,23 +33,52 @@ PAIR_ID = None
     # client.orders.cancel(order["order_id"])
 
 def strategy(client: TradingClient):
-    """Called once per second while the competition and streams are ready."""
+    """Called once per second while streams are ready."""
 
     all_competition_info = client.competition.retrieve()
-    pairs = client.competition.retrieve()["pairs"] # type=dict, keyed by string pair ID
+    pairs = all_competition_info["pairs"]
 
-    # Go through all pairs
+    # Go through all trading pairs
     for pair_key, pair in pairs.items():
+
         if pair.get("trading_status") == "open":
-            # Can trade pair
+
             pair_id = int(pair_key)
 
             book = client.market.order_book(pair_id)
-            best_bid = book["bids"][0]["price"] if book["bids"] else None
-            best_ask = book["asks"][0]["price"] if book["asks"] else None
 
-            # Decide to trade it?
-            print(f"Pair {pair_id}: bid={best_bid}, ask={best_ask}")    
+            best_bid = (
+                book["bids"][0]["price"]
+                if book["bids"] else None
+            )
+
+            best_ask = (
+                book["asks"][0]["price"]
+                if book["asks"] else None
+            )
+
+            # Check that both prices exist
+            if best_bid is None or best_ask is None:
+                print(f"Pair {pair_id}: Missing market data")
+                continue
+
+            # Calculate market statistics
+            spread = best_ask - best_bid
+            mid_price = (best_bid + best_ask) / 2
+
+            if mid_price == 0:
+                continue
+
+            spread_pct = (spread / mid_price) * 100
+
+            print(
+                f"Pair {pair_id}: "
+                f"Bid={best_bid}, "
+                f"Ask={best_ask}, "
+                f"Spread={spread:.4f}, "
+                f"Mid={mid_price:.4f}, "
+                f"Spread %={spread_pct:.3f}%"
+            )
             
     
 #     pair_id = PAIR_ID

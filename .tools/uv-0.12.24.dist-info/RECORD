@@ -1,0 +1,17 @@
+../../bin/uv,sha256=VPXtIJhwPGlFq-AxG9CnwFHeaH1GnDzEVHH_Rvcls4c,29052784
+../../bin/uvx,sha256=ke_vOrwDiLdmkMZuLqQssKYTqAlLhhGtp99o59TOSlQ,334512
+uv-0.12.24.dist-info/INSTALLER,sha256=zuuue4knoyJ-UwPPXg8fezS7VCrXJQrAP7zeNuwvFQg,4
+uv-0.12.24.dist-info/METADATA,sha256=vvtKwEQ-t9cuud7TIPdSbEL48IRKdg3e0ENherB-kic,11167
+uv-0.12.24.dist-info/RECORD,,
+uv-0.12.24.dist-info/REQUESTED,sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0
+uv-0.12.24.dist-info/WHEEL,sha256=U927pSLvWHh5eaqcN5v72CdMm-HUWF344fKLe8HhSOU,102
+uv-0.12.24.dist-info/licenses/LICENSE-APACHE,sha256=xx0jnfkXJvxRnG63LTGOxlggYnIysveWIZ6H3PNdCrQ,11357
+uv-0.12.24.dist-info/licenses/LICENSE-MIT,sha256=hg49eoa4TmpwEsemNfxk30dc68bM403-tzpZguxYF2w,1077
+uv-0.12.24.dist-info/sboms/uv.cyclonedx.json,sha256=0zPrNFB3orRWEYg_3fKDaWS6P-R8NklEZgJA7Xf2Gyw,798031
+uv/__init__.py,sha256=DLA95X6E43S_PG_aShLgH2Mx0Os_P31OmoGXrS2Mc30,778
+uv/__main__.py,sha256=Apkco79EqrcRs5YPRMA4NfwkzbYdknTg4IwZTdyUSQc,1211
+uv/__pycache__/__init__.cpython-314.pyc,,
+uv/__pycache__/__main__.cpython-314.pyc,,
+uv/__pycache__/_find_uv.cpython-314.pyc,,
+uv/_find_uv.py,sha256=CLps15bavfKFrHLOaw90f2g18Y3y4LC9ylI35o_qlKE,3139
+uv/py.typed,sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0
