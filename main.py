@@ -13,7 +13,7 @@ def strategy(client: TradingClient):
     """Called once per second while the competition and streams are ready."""
     pair_id = PAIR_ID
     if pair_id is None:
-        pairs = client.competition.retrieve()["pairs"]
+        pairs = client.competition.retrieve()["pairs"] # type=dict, keyed by string pair ID
         pair_id = next(
             (int(key) for key, pair in pairs.items() if pair.get("trading_status") == "open"),
             None,
@@ -31,6 +31,46 @@ def strategy(client: TradingClient):
     # Use the pair's min_price_increment and min_qty_increment from the dictionary.
     # order = client.orders.create(pair_id, side="buy", qty="1", price="150.42")
     # client.orders.cancel(order["order_id"])
+
+# def strategy(client: TradingClient):
+#     """Called once per second while the competition and streams are ready."""
+
+#     all_competition_info = client.competition.retrieve()
+#     pairs = client.competition.retrieve()["pairs"] # type=dict, keyed by string pair ID
+
+#     # Go through all pairs
+#     for pair_key, pair in pairs.items():
+#         if pair.get("trading_status") == "open":
+#             # Can trade pair
+#             pair_id = int(pair_key)
+
+#             book = client.market.order_book(pair_id)
+#             best_bid = book["bids"][0]["price"] if book["bids"] else None
+#             best_ask = book["asks"][0]["price"] if book["asks"] else None
+
+#             # Decide to trade it?
+            
+    
+#     pair_id = PAIR_ID
+#     if pair_id is None:
+#         pairs = client.competition.retrieve()["pairs"] # type=dict, keyed by string pair ID
+#         pair_id = next(
+#             (int(key) for key, pair in pairs.items() if pair.get("trading_status") == "open"),
+#             None,
+#         )
+#     if pair_id is None:
+#         print("No open trading pair. Waiting.")
+#         return
+
+#     book = client.market.order_book(pair_id)
+#     best_bid = book["bids"][0]["price"] if book["bids"] else None
+#     best_ask = book["asks"][0]["price"] if book["asks"] else None
+#     print(f"Pair {pair_id}: bid={best_bid}, ask={best_ask}")
+
+#     # Add your strategy here. Amounts are human decimal strings or Decimal values.
+#     # Use the pair's min_price_increment and min_qty_increment from the dictionary.
+#     # order = client.orders.create(pair_id, side="buy", qty="1", price="150.42")
+#     # client.orders.cancel(order["order_id"])
 
 
 def main():
